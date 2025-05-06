@@ -19,9 +19,6 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
-app.get('/docs', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'dokumentasi.html'));
-});
 
 app.get('/qris/:filename', (req, res) => {
     const filePath = path.join('/tmp', req.params.filename);
