@@ -249,7 +249,7 @@
                         </button>
                         <pre class="bg-gray-800 p-4 rounded-lg"><code class="language-json">{
   "id": "TX1683276452345",  // Transaction ID
-  "qris": "https://createqris.my.id/qris/OK1683276452345.jpg",  // QRIS image URL
+  "qris": "https://payorkut.ceknickname.my.id/qris/OK1683276452345.jpg",  // QRIS image URL
   "expireAt": 1683277352345  // Expiration timestamp (15 minutes after creation)
 }</code></pre>
                     </div>
@@ -364,7 +364,7 @@
                                 <i class="far fa-copy"></i> Copy
                             </button>
                             <pre class="bg-gray-800 p-5 rounded-lg"><code class="language-javascript">// Using fetch to generate a QRIS code
-fetch('https://createqris.my.id/api/topup', {
+fetch('https://Ganti/api/topup', {
   method: 'POST',
   headers: {
     'Content-Type': 'application/json',
@@ -394,7 +394,7 @@ fetch('https://createqris.my.id/api/topup', {
                             <pre class="bg-gray-800 p-5 rounded-lg"><code class="language-javascript">// Function to check payment status
 function checkPaymentStatus(transactionId) {
   const statusCheck = setInterval(() => {
-    fetch(`https://createqris.my.id/api/check-payment/${transactionId}`)
+    fetch(`https://payorkut.ceknickname.my.id/api/check-payment/${transactionId}`)
       .then(response => response.json())
       .then(data => {
         console.log('Payment status:', data.status);
@@ -497,7 +497,7 @@ function checkPaymentStatus(transactionId) {
             }
             
             // Back to top button
-            const backToTop = document.getElementById('backToTop');
+        const backToTop = document.getElementById('backToTop');
             
             window.addEventListener('scroll', () => {
                 if (window.pageYOffset > 300) {
