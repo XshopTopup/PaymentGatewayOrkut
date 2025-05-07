@@ -2,11 +2,10 @@ const express = require('express');
 const axios = require('axios');
 const cors = require('cors');
 const path = require('path');
-const fs = require('fs');
 const { qrisDinamis } = require('./dinamis');
 
 const app = express();
-const port = process.env.PORT || 3001;
+const port = process.env.PORT || 3002;
 
 app.use(express.json());
 app.use(cors());
@@ -37,17 +36,7 @@ app.post('/api/topup', async (req, res) => {
         const filename = `OK${Date.now()}`;
         const filepath = `/tmp/${filename}.jpg`;
         await qrisDinamis(amount, filepath);
-        
-        transaksi[id] = { 
-            id,
-            amount, 
-            startTime, 
-            expireTime, 
-            paid: false, 
-            qris: filename, 
-            username,
-            lastChecked: Date.now()
-        };
+        transaksi[id] = { amount, startTime, expireTime, paid: false, qris: filename, username };
 
         res.json({
             id,
@@ -61,66 +50,45 @@ app.post('/api/topup', async (req, res) => {
 });
 
 app.get('/api/check-payment/:id', async (req, res) => {
-  const { id } = req.params;
-  const trx = transaksi[id];
-  if (!trx) return res.status(404).json({ error: 'Transaction not found' });
+  const { id } = req.params;
+  const trx = transaksi[id];
+  if (!trx) return res.status(404).json({ error: 'Transaction not found' });
 
-  const qrisFile = path.join('/tmp', `${trx.qris}.jpg`);
+  const qrisFile = path.join('/tmp', `${trx.qris}.jpg`);
 
-  if (trx.paid) {
-    try { fs.unlinkSync(qrisFile); } catch (e) { console.error('Error removing file:', e); }
-    delete transaksi[id];
-    return res.json({ status: 'payment successful' });
-  }
+  if (trx.paid) {
+    try { fs.unlinkSync(qrisFile); } catch {}
+    delete transaksi[id];
+    return res.json({ status: 'payment successful' });
+  }
 
-  if (Date.now() > trx.expireTime) {
-    try { fs.unlinkSync(qrisFile); } catch (e) { console.error('Error removing file:', e); }
-    delete transaksi[id];
-    return res.json({ status: 'expired' });
-  }
+  if (Date.now() > trx.expireTime) {
+    try { fs.unlinkSync(qrisFile); } catch {}
+    delete transaksi[id];
+    return res.json({ status: 'expired' });
+  }
 
-  trx.lastChecked = Date.now();
+  try {
+    const response = await axios.get(`https://gateway.okeconnect.com/api/mutasi/qris/${merchantId}/${apikey}`);
+    const txList = response.data.data.slice(0, 20);
+    const matched = txList.some(tx => {
+      const txTime = new Date(tx.date).getTime();
+      return txTime >= trx.startTime && parseInt(tx.amount) === parseInt(trx.amount);
+    });
 
-  try {
-    const response = await axios.get(`https://gateway.okeconnect.com/api/mutasi/qris/${merchantId}/${apikey}`);
-    const txList = response.data.data.slice(0, 20);
-    
-    const matched = txList.find(tx => {
-      const txTime = new Date(tx.date).getTime();
-      
-      return txTime >= trx.startTime && 
-             txTime <= Date.now() && 
-             parseInt(tx.amount) === parseInt(trx.amount);
-             
-    });
+    if (matched) {
+      trx.paid = true;
+      try { fs.unlinkSync(qrisFile); } catch {}
+      delete transaksi[id];
+      return res.json({ status: 'payment successful' });
+    }
 
-    if (matched) {
-      console.log(`Payment confirmed for transaction ${id}: ${JSON.stringify(matched)}`);
-      trx.paid = true;
-      try { fs.unlinkSync(qrisFile); } catch (e) { console.error('Error removing file:', e); }
-      delete transaksi[id];
-      return res.json({ status: 'payment successful' });
-    }
-
-    return res.json({ status: 'pending' });
-  } catch (err) {
-    console.error(`Error checking payment for ${id}:`, err.message);
-    res.status(500).json({ error: 'Failed to check payment status' });
-  }
+    return res.json({ status: 'pending' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to check payment status' });
+  }
 });
-
-setInterval(() => {
-  const now = Date.now();
-  Object.keys(transaksi).forEach(id => {
-    const trx = transaksi[id];
-    if (now > trx.expireTime) {
-      const qrisFile = path.join('/tmp', `${trx.qris}.jpg`);
-      try { fs.unlinkSync(qrisFile); } catch (e) {}
-      delete transaksi[id];
-      console.log(`Transaction ${id} expired and cleaned up`);
-    }
-  });
-}, 60000);
 
 app.get('/*', (req, res) => {
    res.status(404).json({ error: 'Error' });
