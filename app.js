@@ -96,11 +96,11 @@ app.post('/api/topup', async (req, res) => {
     const { amount, username } = req.body;
     if (!amount || isNaN(amount)) return res.status(400).json({ error: 'Invalid amount' });
 
-    const uniqueSuffix = Math.floor(1 + Math.random() * 999);
+    const uniqueSuffix = Math.floor(1 + Math.random() * 100);
     const originalAmount = parseInt(amount);
     const uniqueAmount = originalAmount + uniqueSuffix;
     
-    const id = 'XST' + Date.now();
+    const id = '〤' + Date.now();
     const startTime = Date.now();
     const expireTime = startTime + 15 * 60 * 1000;
 
