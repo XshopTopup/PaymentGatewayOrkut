@@ -35,7 +35,7 @@ app.post('/api/topup', async (req, res) => {
     
     const id = 'XST' + Date.now();
     const startTime = Date.now();
-    const expireTime = startTime + 15 * 60 * 1000;
+    const expireTime = startTime + 10 * 60 * 1000;
 
     try {
         const filename = `OK${Date.now()}`;
