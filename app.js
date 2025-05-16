@@ -51,7 +51,7 @@ app.post('/api/topup', async (req, res) => {
     const now = Date.now();
     const dayStart = now - (now % (24 * 60 * 60 * 1000));
     while (attempts < maxAttempts) {
-        uniqueSuffix = Math.floor(1 + Math.random() * 999);
+        uniqueSuffix = Math.floor(1 + Math.random() * 3);
         uniqueAmount = originalAmount + uniqueSuffix;
         if (!usedAmounts.has(uniqueAmount) || usedAmounts.get(uniqueAmount).dayStart !== dayStart) {
             usedAmounts.set(uniqueAmount, { dayStart, createdAt: now });
@@ -69,7 +69,7 @@ app.post('/api/topup', async (req, res) => {
     let counter = transactionIdCounters.get(dayKey) || 0;
     counter += 1;
     transactionIdCounters.set(dayKey, counter);
-    const id = `${dayKey}${counter.toString().padStart(6, '0')}`; // Contoh: XST<timestamp>000001
+    const id = `${dayKey}${counter.toString().padStart(3, '0')}`; // Contoh: XST<timestamp>000001
 
     const startTime = Date.now();
     const expireTime = startTime + 10 * 60 * 1000;
