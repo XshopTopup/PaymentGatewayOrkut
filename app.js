@@ -2,7 +2,6 @@ const express = require('express');
 const axios = require('axios');
 const cors = require('cors');
 const path = require('path');
-const fs = require('fs');
 const { qrisDinamis } = require('./dinamis');
 
 const app = express();
@@ -12,76 +11,6 @@ app.use(express.json());
 app.use(cors());
 app.set('trust proxy', true);
 
-// Rate limiting configuration
-const RATE_LIMIT = {
-  maxRequests: 2,     // Maximum 2 requests
-  windowMs: 10000,    // Within 10 seconds (10,000 ms)
-};
-
-// Queue to track API requests
-const requestQueue = [];
-
-/**
- * Makes API requests while respecting rate limits
- * @param {string} url - The API endpoint URL
- * @param {Object} options - Axios request options
- * @returns {Promise} - API response
- */
-async function rateLimitedRequest(url, options = {}) {
-  // Clean up the queue - remove requests older than our window
-  const now = Date.now();
-  while (requestQueue.length > 0 && now - requestQueue[0] > RATE_LIMIT.windowMs) {
-    requestQueue.shift();
-  }
-
-  // Check if we've hit the rate limit
-  if (requestQueue.length >= RATE_LIMIT.maxRequests) {
-    const oldestRequest = requestQueue[0];
-    const timeToWait = RATE_LIMIT.windowMs - (now - oldestRequest) + 100; // Add 100ms buffer
-    
-    console.log(`Rate limit reached. Waiting ${timeToWait}ms before retrying...`);
-    await new Promise(resolve => setTimeout(resolve, timeToWait));
-    
-    // Recursive call after waiting
-    return rateLimitedRequest(url, options);
-  }
-
-  // Add current request timestamp to the queue
-  requestQueue.push(Date.now());
-
-  try {
-    return await axios({
-      url,
-      ...options
-    });
-  } catch (error) {
-    if (error.response && error.response.status === 429) {
-      // Extract retry-after header or default to 10 seconds
-      const retryAfter = parseInt(error.response.headers['retry-after'] || '10', 10);
-      const waitTime = retryAfter * 1000;
-      
-      console.log(`Received 429 error. Waiting ${waitTime}ms before retrying...`);
-      await new Promise(resolve => setTimeout(resolve, waitTime));
-      
-      // Remove the failed request from queue
-      requestQueue.pop();
-      
-      // Retry the request
-      return rateLimitedRequest(url, options);
-    }
-    
-    // Re-throw other errors
-    throw error;
-  }
-}
-
-// Storage for transactions
-const transaksi = {};
-const merchantId = 'OK2010179';
-const apikey = '589503917347533522010179OKCT111616275EB7F8C048F9DD2483ACC75A';
-const processedTransactions = new Set();
-
-// Serve QRIS images
 app.get('/qris/:filename', (req, res) => {
     const filePath = path.join('/tmp', req.params.filename);
     res.sendFile(filePath, err => {
@@ -91,16 +20,20 @@ app.get('/qris/:filename', (req, res) => {
     });
 });
 
-// Create a new QRIS transaction
+const transaksi = {};
+const merchantId = 'OK2010179';
+const apikey = '589503917347533522010179OKCT111616275EB7F8C048F9DD2483ACC75A';
+const processedTransactions = new Set();
+
 app.post('/api/topup', async (req, res) => {
     const { amount, username } = req.body;
     if (!amount || isNaN(amount)) return res.status(400).json({ error: 'Invalid amount' });
 
-    const uniqueSuffix = Math.floor(1 + Math.random() * 100);
+    const uniqueSuffix = Math.floor(1 + Math.random() * 999);
     const originalAmount = parseInt(amount);
     const uniqueAmount = originalAmount + uniqueSuffix;
     
-    const id = '〤' + Date.now();
+    const id = 'XST' + Date.now();
     const startTime = Date.now();
     const expireTime = startTime + 15 * 60 * 1000;
 
@@ -135,7 +68,6 @@ app.post('/api/topup', async (req, res) => {
     }
 });
 
-// Check payment status
 app.get('/api/check-payment/:id', async (req, res) => {
     const { id } = req.params;
     const trx = transaksi[id];
@@ -156,11 +88,7 @@ app.get('/api/check-payment/:id', async (req, res) => {
     }
 
     try {
-        // Use rate limited request instead of direct axios call
-        const response = await rateLimitedRequest(
-            `https://gateway.okeconnect.com/api/mutasi/qris/${merchantId}/${apikey}`
-        );
-        
+        const response = await axios.get(`https://gateway.okeconnect.com/api/mutasi/qris/${merchantId}/${apikey}`);
         const txList = response.data.data.slice(0, 20);
         
         const matchedTx = txList.find(tx => {
@@ -201,7 +129,6 @@ app.get('/api/check-payment/:id', async (req, res) => {
     }
 });
 
-// Cleanup expired transactions
 function cleanupExpiredTransactions() {
     const now = Date.now();
     Object.keys(transaksi).forEach(id => {
@@ -216,7 +143,6 @@ function cleanupExpiredTransactions() {
 
 setInterval(cleanupExpiredTransactions, 5 * 60 * 1000);
 
-// Cleanup processed transactions to prevent memory leaks
 function cleanupProcessedTransactions() {
     if (processedTransactions.size > 1000) {
         processedTransactions.clear();
@@ -224,13 +150,11 @@ function cleanupProcessedTransactions() {
 }
 
 setInterval(cleanupProcessedTransactions, 60 * 60 * 1000);
-
-// Catch-all route
+                
 app.get('/*', (req, res) => {
    res.status(404).json({ error: 'Error' });
 });
 
-// Start server if this is the main module
 if (require.main === module) {
     app.listen(port, () => {
         console.log(`Server berjalan di http://localhost:${port}`);
