@@ -51,7 +51,7 @@ app.post('/api/topup', async (req, res) => {
     const now = Date.now();
     const dayStart = now - (now % (24 * 60 * 60 * 1000));
     while (attempts < maxAttempts) {
-        uniqueSuffix = Math.floor(1 + Math.random() * 3);
+        uniqueSuffix = Math.floor(1 + Math.random() * 999);
         uniqueAmount = originalAmount + uniqueSuffix;
         if (!usedAmounts.has(uniqueAmount) || usedAmounts.get(uniqueAmount).dayStart !== dayStart) {
             usedAmounts.set(uniqueAmount, { dayStart, createdAt: now });
@@ -214,7 +214,7 @@ function cleanupExpiredData() {
     }
 }
 
-setInterval(cleanupExpiredData, 5 * 60 * 1000);
+setInterval(cleanupExpiredData, 7 * 60 * 1000);
 
 function cleanupProcessedTransactions() {
     if (processedTransactions.size > 1000) {
