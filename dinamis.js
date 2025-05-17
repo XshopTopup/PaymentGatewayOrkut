@@ -55,12 +55,28 @@ async function qrisDinamis(nominal, path) {
   // Draw the QR code on the canvas
   ctx.drawImage(image, 0, 0);
 
-  // Add watermark
-  ctx.font = 'bold 20px Arial'; // Adjust font size to be small enough
-  ctx.fillStyle = 'rgba(255, 255, 255, 0.8)'; // White with slight transparency
+  // Calculate dimensions for the watermark (oval background)
+  const watermarkWidth = canvas.width * 0.3; // 30% of QR code width
+  const watermarkHeight = canvas.height * 0.15; // 15% of QR code height
+  const centerX = canvas.width / 2;
+  const centerY = canvas.height / 2;
+
+  // Draw the purple oval background
+  ctx.fillStyle = '#7B2CBF'; // Purple color matching the AXIS logo
+  ctx.beginPath();
+  ctx.ellipse(centerX, centerY, watermarkWidth / 2, watermarkHeight / 2, 0, 0, 2 * Math.PI);
+  ctx.fill();
+
+  // Draw the main text "XSTBOT"
+  ctx.font = 'bold 28px Arial'; // Adjust font size to fit
+  ctx.fillStyle = 'white';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText('XSTBOT', canvas.width / 2, canvas.height / 2);
+  ctx.fillText('XSTBOT', centerX, centerY);
+
+  // Draw the smaller text "JXSTBOT" below
+  ctx.font = 'bold 14px Arial'; // Smaller font for the subtext
+  ctx.fillText('JXSTBOT', centerX, centerY + watermarkHeight / 2 + 10);
 
   // Save the final image
   const buffer = canvas.toBuffer('image/png');
