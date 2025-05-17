@@ -38,7 +38,7 @@ let lastApiResponse = null;
 let lastApiFetchTime = 0;
 const EXPIRY_DURATION = 10 * 60 * 1000;
 const MAX_ACTIVE_TRANSACTIONS = 1;
-const MAX_GLOBAL_ACTIVE_TRANSACTIONS = 3;
+const MAX_GLOBAL_ACTIVE_TRANSACTIONS = 5;
 
 app.post('/api/topup', async (req, res) => {
     const { amount, username } = req.body;
@@ -87,7 +87,7 @@ app.post('/api/topup', async (req, res) => {
     const dayStart = now - (now % (24 * 60 * 60 * 1000));
     const dayKey = new Date(dayStart).toISOString().slice(0, 10).replace(/-/g, ''); 
     while (attempts < maxAttempts) {
-        uniqueSuffix = Math.floor(1 + Math.random() * 2);
+        uniqueSuffix = Math.floor(1 + Math.random() * 500);
         uniqueAmount = originalAmount + uniqueSuffix;
         const existing = usedAmounts.get(uniqueAmount);
         if (!existing || existing.dayStart !== dayStart || now > existing.expireTime) {
