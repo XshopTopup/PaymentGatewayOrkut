@@ -38,7 +38,7 @@ let lastApiResponse = null;
 let lastApiFetchTime = 0;
 const EXPIRY_DURATION = 10 * 60 * 1000;
 const MAX_ACTIVE_TRANSACTIONS = 1;
-const MAX_GLOBAL_ACTIVE_TRANSACTIONS = 5;
+const MAX_GLOBAL_ACTIVE_TRANSACTIONS = 501;
 const USER_REQUEST_DELAY = 10000; // 10 seconds delay between different users' requests
 
 // Track last request time for each user
