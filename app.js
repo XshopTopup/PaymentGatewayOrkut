@@ -39,7 +39,7 @@ let lastApiFetchTime = 0;
 const EXPIRY_DURATION = 10 * 60 * 1000;
 const MAX_ACTIVE_TRANSACTIONS = 1;
 const MAX_GLOBAL_ACTIVE_TRANSACTIONS = 5;
-const REQUEST_DELAY = 1500;
+const REQUEST_DELAY = 5000;
 
 const requestQueue = [];
 let isProcessingQueue = false;
