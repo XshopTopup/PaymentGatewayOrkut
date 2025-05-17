@@ -20,8 +20,8 @@
             <p class="text-gray-700">
                 API Pembayaran QRIS memungkinkan pembuatan dan verifikasi transaksi pembayaran berbasis QRIS.
                 API ini menjamin keunikan Transaction ID dan nominal dalam periode 24 jam untuk mencegah konflik.
-                Fitur optimasi meliputi caching untuk pengecekan status pembayaran, pengurangan pengambilan data API,
-                dan pembersihan otomatis data yang kadaluarsa.
+                Fitur optimasi meliputi per-user request delay untuk mencegah pemrosesan simultan, caching untuk pengecekan status pembayaran,
+                pengurangan pengambilan data API, dan pembersihan otomatis data yang kadaluarsa.
                 Dokumentasi ini merinci endpoint, parameter, respons, dan fitur optimasi.
             </p>
         </section>
@@ -33,35 +33,45 @@
                 <h3 class="text-xl font-semibold mb-2">POST /api/topup</h3>
                 <p class="text-gray-700 mb-4">
                     Menghasilkan kode QRIS untuk transaksi pembayaran dengan nominal dan Transaction ID yang unik.
-                    Transaction ID diformat sebagai <code>TRX<dayStart><counter></code> (contoh: <code>TRX1623456000000001</code>),
-                    memastikan keunikan dalam periode 24 jam. Sufiks unik (1-999) ditambahkan ke nominal untuk membuat total unik.
+                    Transaction ID diformat sebagai <code>YYYYMMDD<counter></code> (contoh: <code>202505170001</code>),
+                    memastikan keunikan dalam periode 24 jam. Sufiks unik (1-500) ditambahkan ke nominal untuk membuat total unik.
+                    Setiap permintaan dari pengguna berbeda memiliki jeda minimal 10 detik untuk mencegah konflik.
+                    Maksimal 1 transaksi aktif per pengguna dan 5 transaksi aktif secara global.
                 </p>
                 
                 <h4 class="font-semibold mb-2">Body Permintaan</h4>
                 <pre class="bg-gray-800 text-white p-4 rounded-lg overflow-x-auto">
 {
     "amount": number, // Wajib, bilangan bulat positif (contoh: 10000)
-    "username": string // Wajib, pengenal pengguna
+    "username": string // Wajib, pengenal pengguna (contoh: "john_doe")
 }
                 </pre>
 
                 <h4 class="font-semibold mb-2 mt-4">Respons</h4>
                 <pre class="bg-gray-800 text-white p-4 rounded-lg overflow-x-auto">
 {
-    "id": string, // Transaction ID unik (contoh: "TRX1623456000000001")
-    "qris": string, // URL gambar QRIS (contoh: "https://payorkut.ceknickname.my.id/qris/OK1234567890.jpg")
+    "id": string, // Transaction ID unik (contoh: "202505170001")
+    "qris": string, // URL gambar QRIS (contoh: "https://payorkut.ceknickname.my.id/qris/XST1234567890.jpg")
     "expireAt": number, // Timestamp kadaluarsa (milidetik)
+    "expiresIn": number, // Sisa waktu kadaluarsa (detik)
     "amount": number, // Nominal asli yang diminta
-    "kodeunik": number, // Sufiks unik (1-999)
+    "kodeunik": number, // Sufiks unik (1-500)
     "total": number, // Total nominal yang harus dibayar (amount + kodeunik)
-    "note": string // Instruksi pembayaran
+    "note": string, // Instruksi pembayaran
+    "expiryStatus": string // "active" atau "expires_soon" (jika <10 menit)
 }
                 </pre>
 
                 <h4 class="font-semibold mb-2 mt-4">Respons Error</h4>
                 <ul class="list-disc pl-5 text-gray-700">
-                    <li>400 Bad Request: Nominal tidak valid atau bukan bilangan bulat positif.</li>
-                    <li>429 Too Many Requests: Tidak ada nominal unik yang tersedia.</li>
+                    <li>400 Bad Request: Nominal tidak valid atau bukan bilangan bulat positif, atau username tidak diberikan.</li>
+                    <li>429 Too Many Requests: 
+                        <ul class="list-circle pl-5">
+                            <li>Terlalu banyak transaksi aktif (1 per pengguna, 5 secara global).</li>
+                            <li>Tidak ada nominal unik yang tersedia.</li>
+                            <li>Permintaan tertunda karena jeda 10 detik antar pengguna.</li>
+                        </ul>
+                    </li>
                     <li>500 Internal Server Error: Gagal menghasilkan QRIS.</li>
                 </ul>
 
@@ -83,13 +93,15 @@ curl -X POST https://payorkut.ceknickname.my.id/api/topup \
                 
                 <h4 class="font-semibold mb-2">Parameter</h4>
                 <ul class="list-disc pl-5 text-gray-700">
-                    <li><code>id</code>: Transaction ID (contoh: "TRX1623456000000001")</li>
+                    <li><code>id</code>: Transaction ID (contoh: "202505170001")</li>
                 </ul>
 
                 <h4 class="font-semibold mb-2 mt-4">Respons</h4>
                 <pre class="bg-gray-800 text-white p-4 rounded-lg overflow-x-auto">
 {
     "status": string, // "paid" (dibayar), "pending" (menunggu), atau "expired" (kadaluarsa)
+    "expiresIn": number, // Sisa waktu kadaluarsa (detik, 0 jika paid atau expired)
+    "expiryStatus": string, // "active" atau "expires_soon" (jika <10 menit, hanya untuk pending)
     "paymentDetails": { // Hanya disertakan jika status "paid"
         "paymentId": string, // Referensi pembayaran dari gateway
         "paymentTime": string, // Timestamp pembayaran
@@ -109,7 +121,7 @@ curl -X POST https://payorkut.ceknickname.my.id/api/topup \
 
                 <h4 class="font-semibold mb-2 mt-4">Contoh</h4>
                 <pre class="bg-gray-800 text-white p-4 rounded-lg overflow-x-auto">
-curl https://payorkut.ceknickname.my.id/api/check-payment/TRX1623456000000001
+curl https://payorkut.ceknickname.my.id/api/check-payment/202505170001
                 </pre>
             </div>
 
@@ -119,7 +131,7 @@ curl https://payorkut.ceknickname.my.id/api/check-payment/TRX1623456000000001
                 
                 <h4 class="font-semibold mb-2">Parameter</h4>
                 <ul class="list-disc pl-5 text-gray-700">
-                    <li><code>filename</code>: Nama file gambar QRIS (contoh: "OK1234567890.jpg")</li>
+                    <li><code>filename</code>: Nama file gambar QRIS (contoh: "XST1234567890.jpg")</li>
                 </ul>
 
                 <h4 class="font-semibold mb-2 mt-4">Respons</h4>
@@ -139,15 +151,23 @@ curl https://payorkut.ceknickname.my.id/api/check-payment/TRX1623456000000001
             </p>
             <ul class="list-disc pl-5 text-gray-700">
                 <li>
-                    <strong>Transaction ID Unik</strong>: Transaction ID dibuat dalam format
-                    <code>TRX<dayStart><counter></code> (contoh: <code>TRX1623456000000001</code>),
-                    di mana <code>dayStart</code> adalah timestamp awal hari, dan <code>counter</code>
-                    adalah nomor urut harian (hingga 999999). Ini menjamin tidak ada duplikasi ID dalam 24 jam.
+                    <strong>Per-User Request Delay</strong>: Permintaan deposit dari pengguna berbeda diproses dengan jeda minimal
+                    10 detik untuk mencegah konflik dalam pembuatan nominal unik dan mengurangi beban pada layanan QRIS eksternal.
                 </li>
                 <li>
-                    <strong>Nominal Unik</strong>: Sufiks unik (1-999) ditambahkan ke nominal yang diminta untuk membuat
+                    <strong>Transaction ID Unik</strong>: Transaction ID dibuat dalam format
+                    <code>YYYYMMDD<counter></code> (contoh: <code>202505170001</code>),
+                    di mana <code>YYYYMMDD</code> adalah tanggal dan <code>counter</code>
+                    adalah nomor urut harian (4 digit, hingga 9999). Ini menjamin tidak ada duplikasi ID dalam 24 jam.
+                </li>
+                <li>
+                    <strong>Nominal Unik</strong>: Sufiks unik (1-500) ditambahkan ke nominal yang diminta untuk membuat
                     total unik (contoh: 10000 + 123 = 10123). Ini mencegah konflik dalam periode 24 jam.
-                    Jika tidak ada sufiks unik yang tersedia, API mengembalikan error 429.
+                    Jika tidak ada sufiks unik yang tersedia setelah 999 percobaan, API mengembalikan error 429.
+                </li>
+                <li>
+                    <strong>Batas Transaksi</strong>: Maksimal 1 transaksi aktif per pengguna dan 5 transaksi aktif secara global
+                    untuk mencegah overload sistem. Jika batas tercapai, API mengembalikan error 429 dengan waktu tunggu.
                 </li>
                 <li>
                     <strong>Pengecekan Status yang Dioptimalkan</strong>: Endpoint <code>/api/check-payment/:id</code>
@@ -155,8 +175,8 @@ curl https://payorkut.ceknickname.my.id/api/check-payment/TRX1623456000000001
                     Respons API di-cache selama 30 detik untuk meminimalkan panggilan berulang.
                 </li>
                 <li>
-                    <strong>Pembersihan Otomatis</strong>: Transaksi yang kadaluarsa, nominal unik, dan counter ID
-                    dibersihkan setiap 5 menit. Catatan transaksi yang telah diproses dihapus setiap jam jika melebihi
+                    <strong>Pembersihan Otomatis</strong>: Transaksi yang kadaluarsa, nominal unik, counter ID, dan waktu permintaan
+                    pengguna dibersihkan setiap 2 menit. Catatan transaksi yang telah diproses dihapus setiap jam jika melebihi
                     1000 entri. Gambar QRIS dihapus setelah pembayaran atau kadaluarsa untuk menghemat penyimpanan.
                 </li>
             </ul>
@@ -165,11 +185,12 @@ curl https://payorkut.ceknickname.my.id/api/check-payment/TRX1623456000000001
         <section id="catatan" class="mb-12">
             <h2 class="text-2xl font-semibold mb-4">Catatan Tambahan</h2>
             <ul class="list-disc pl-5 text-gray-700">
-                <li>Transaksi kadaluarsa setelah 15 menit.</li>
+                <li>Transaksi kadaluarsa setelah 10 menit.</li>
                 <li>Transaction ID dan nominal dijamin unik dalam periode 24 jam.</li>
                 <li>Gambar QRIS dihapus otomatis setelah pembayaran atau kadaluarsa.</li>
+                <li>Permintaan deposit dari pengguna berbeda memiliki jeda minimal 10 detik.</li>
                 <li>Untuk volume transaksi tinggi, pertimbangkan menggunakan database (contoh: Redis) untuk menyimpan
-                    nominal unik dan counter ID.</li>
+                    nominal unik, counter ID, dan waktu permintaan pengguna.</li>
                 <li>Kunci API dan Merchant ID harus disimpan dengan aman dalam variabel lingkungan.</li>
             </ul>
         </section>
@@ -181,4 +202,4 @@ curl https://payorkut.ceknickname.my.id/api/check-payment/TRX1623456000000001
         </div>
     </footer>
 </body>
-                    </html>
+</html>
