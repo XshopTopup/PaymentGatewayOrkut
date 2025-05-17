@@ -30,13 +30,15 @@ const transaksi = {};
 const usedAmounts = new Map();
 const transactionIdCounters = new Map();
 const userActiveTransactions = new Map();
+const globalActiveTransactions = new Set();
 const merchantId = 'OK2010179';
 const apikey = '642611917473311022010179OKCT01251A5A297AF4EEB7FC7CC7BFA2683C';
 const processedTransactions = new Set();
 let lastApiResponse = null;
 let lastApiFetchTime = 0;
 const EXPIRY_DURATION = 10 * 60 * 1000;
-const MAX_ACTIVE_TRANSACTIONS = 2; // Diubah menjadi 2 transaksi aktif per user
+const MAX_ACTIVE_TRANSACTIONS = 1;
+const MAX_GLOBAL_ACTIVE_TRANSACTIONS = 5;
 
 app.post('/api/topup', async (req, res) => {
     const { amount, username } = req.body;
@@ -58,7 +60,20 @@ app.post('/api/topup', async (req, res) => {
         const earliestExpiry = Math.min(...validActiveTransactions.map(id => transaksi[id].expireTime));
         const waitTime = Math.ceil((earliestExpiry - now) / 1000);
         return res.status(429).json({ 
-            error: 'Too many active transactions. Please wait until existing transactions are paid or expired.',
+            error: 'Too many active transactions. Only 1 active transaction allowed per user within 10 minutes.',
+            waitTime
+        });
+    }
+
+    const validGlobalTransactions = Array.from(globalActiveTransactions).filter(id => {
+        const trx = transaksi[id];
+        return trx && !trx.paid && now <= trx.expireTime;
+    });
+    if (validGlobalTransactions.length >= MAX_GLOBAL_ACTIVE_TRANSACTIONS) {
+        const earliestGlobalExpiry = Math.min(...validGlobalTransactions.map(id => transaksi[id].expireTime));
+        const waitTime = Math.ceil((earliestGlobalExpiry - now) / 1000);
+        return res.status(429).json({ 
+            error: 'System busy. Maximum 5 active transactions allowed across all users. Please try again later.',
             waitTime
         });
     }
@@ -70,6 +85,7 @@ app.post('/api/topup', async (req, res) => {
     let attempts = 0;
 
     const dayStart = now - (now % (24 * 60 * 60 * 1000));
+    const dayKey = new Date(dayStart).toISOString().slice(0, 10).replace(/-/g, ''); 
     while (attempts < maxAttempts) {
         uniqueSuffix = Math.floor(1 + Math.random() * 999);
         uniqueAmount = originalAmount + uniqueSuffix;
@@ -85,11 +101,10 @@ app.post('/api/topup', async (req, res) => {
         return res.status(429).json({ error: 'No unique amount available. Try again later.' });
     }
 
-    const dayKey = `TRX${dayStart}`;
     let counter = transactionIdCounters.get(dayKey) || 0;
     counter += 1;
     transactionIdCounters.set(dayKey, counter);
-    const id = `${dayKey}${counter.toString().padStart(6, '0')}`;
+    const id = `${dayKey}${counter.toString().padStart(4, '0')}`; 
 
     const startTime = now;
     const expireTime = startTime + EXPIRY_DURATION;
@@ -111,6 +126,7 @@ app.post('/api/topup', async (req, res) => {
         };
 
         userActiveTransactions.set(username, [...validActiveTransactions, id]);
+        globalActiveTransactions.add(id);
 
         const remainingSeconds = Math.floor((expireTime - now) / 1000);
         res.json({
@@ -145,6 +161,7 @@ app.get('/api/check-payment/:id', async (req, res) => {
         delete transaksi[id];
         usedAmounts.delete(trx.uniqueAmount);
         updateUserActiveTransactions(trx.username, id);
+        globalActiveTransactions.delete(id);
         return res.json({ status: 'paid', expiresIn: 0 });
     }
 
@@ -153,6 +170,7 @@ app.get('/api/check-payment/:id', async (req, res) => {
         delete transaksi[id];
         usedAmounts.delete(trx.uniqueAmount);
         updateUserActiveTransactions(trx.username, id);
+        globalActiveTransactions.delete(id);
         return res.json({ status: 'expired', expiresIn: 0 });
     }
 
@@ -187,6 +205,7 @@ app.get('/api/check-payment/:id', async (req, res) => {
             delete transaksi[id];
             usedAmounts.delete(trx.uniqueAmount);
             updateUserActiveTransactions(trx.username, id);
+            globalActiveTransactions.delete(id);
 
             return res.json({ 
                 status: 'paid',
@@ -227,6 +246,7 @@ function updateUserActiveTransactions(username, transactionId) {
 function cleanupExpiredData() {
     const now = Date.now();
     const dayStart = now - (now % (24 * 60 * 60 * 1000));
+    const dayKey = new Date(dayStart).toISOString().slice(0, 10).replace(/-/g, '');
 
     Object.keys(transaksi).forEach(id => {
         const trx = transaksi[id];
@@ -236,6 +256,7 @@ function cleanupExpiredData() {
             delete transaksi[id];
             usedAmounts.delete(trx.uniqueAmount);
             updateUserActiveTransactions(trx.username, id);
+            globalActiveTransactions.delete(id);
             console.log(`Cleaned expired transaction: ${id}`);
         }
     });
@@ -247,11 +268,11 @@ function cleanupExpiredData() {
         }
     }
 
-    for (const [dayKey] of transactionIdCounters) {
-        const dayTimestamp = parseInt(dayKey.replace('TRX', ''));
-        if (now - dayTimestamp > 24 * 60 * 60 * 1000) {
-            transactionIdCounters.delete(dayKey);
-            console.log(`Cleaned expired counter: ${dayKey}`);
+    for (const [key] of transactionIdCounters) {
+        const keyDate = new Date(parseInt(key.slice(0, 4)), parseInt(key.slice(4, 6)) - 1, parseInt(key.slice(6, 8)));
+        if (now - keyDate.getTime() > 24 * 60 * 60 * 1000) {
+            transactionIdCounters.delete(key);
+            console.log(`Cleaned expired counter: ${key}`);
         }
     }
 
@@ -264,6 +285,13 @@ function cleanupExpiredData() {
             userActiveTransactions.set(username, validTransactions);
         } else {
             userActiveTransactions.delete(username);
+        }
+    }
+
+    for (const id of globalActiveTransactions) {
+        const trx = transaksi[id];
+        if (!trx || trx.paid || now > trx.expireTime) {
+            globalActiveTransactions.delete(id);
         }
     }
 }
