@@ -87,7 +87,7 @@ app.post('/api/topup', async (req, res) => {
     const dayStart = now - (now % (24 * 60 * 60 * 1000));
     const dayKey = new Date(dayStart).toISOString().slice(0, 10).replace(/-/g, ''); 
     while (attempts < maxAttempts) {
-        uniqueSuffix = Math.floor(1 + Math.random() * 999);
+        uniqueSuffix = Math.floor(1 + Math.random() * 500);
         uniqueAmount = originalAmount + uniqueSuffix;
         const existing = usedAmounts.get(uniqueAmount);
         if (!existing || existing.dayStart !== dayStart || now > existing.expireTime) {
