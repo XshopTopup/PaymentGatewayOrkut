@@ -55,14 +55,12 @@ async function processQueue() {
     const { username } = request;
 
     try {
-        // Check if we need to delay this user's request
         const now = Date.now();
         const lastRequestTime = userLastRequestTime.get(username) || 0;
         const timeSinceLastRequest = now - lastRequestTime;
         const delayNeeded = Math.max(0, USER_REQUEST_DELAY - timeSinceLastRequest);
 
         if (delayNeeded > 0) {
-            // Re-queue the request and wait
             setTimeout(() => {
                 requestQueue.unshift({ resolve, reject, request });
                 isProcessingQueue = false;
@@ -71,7 +69,6 @@ async function processQueue() {
             return;
         }
 
-        // Process the request and update last request time
         const result = await handleTopupRequest(request);
         userLastRequestTime.set(username, now);
         resolve(result);
@@ -90,6 +87,8 @@ async function handleTopupRequest({ req, res, amount, username }) {
     if (!username) {
         return res.status(400).json({ error: 'Username is required' });
     }
+
+    cleanupExpiredData();
 
     const activeTransactions = userActiveTransactions.get(username) || [];
     const now = Date.now();
@@ -164,7 +163,8 @@ async function handleTopupRequest({ req, res, amount, username }) {
             expireTime, 
             paid: false, 
             qris: filename,
-            username
+            username,
+            status: 'pending'
         };
 
         userActiveTransactions.set(username, [...validActiveTransactions, id]);
@@ -180,6 +180,7 @@ async function handleTopupRequest({ req, res, amount, username }) {
             kodeunik: uniqueSuffix,
             total: uniqueAmount,
             note: `Mohon transfer tepat ${uniqueAmount} untuk verifikasi otomatis`,
+            status: 'pending',
             expiryStatus: remainingSeconds <= 600 ? 'expires_soon' : 'active'
         });
     } catch (err) {
@@ -202,27 +203,33 @@ app.post('/api/topup', (req, res) => {
 app.get('/api/check-payment/:id', async (req, res) => {
     const { id } = req.params;
     const trx = transaksi[id];
-    if (!trx) return res.status(404).json({ error: 'Transaction not found' });
+    
+    if (!trx) {
+        return res.status(404).json({ 
+            error: 'Transaction not found or already processed',
+            status: 'invalid'
+        });
+    }
 
     const qrisFile = path.join('/tmp', `${trx.qris}.jpg`);
     const now = Date.now();
 
     if (trx.paid) {
-        try { fs.unlinkSync(qrisFile); } catch {}
-        delete transaksi[id];
-        usedAmounts.delete(trx.uniqueAmount);
-        updateUserActiveTransactions(trx.username, id);
-        globalActiveTransactions.delete(id);
-        return res.json({ status: 'paid', expiresIn: 0 });
+        cleanupTransaction(id, trx, qrisFile);
+        return res.json({ 
+            status: 'paid', 
+            expiresIn: 0,
+            paymentDetails: trx.paymentDetails || {}
+        });
     }
 
     if (now > trx.expireTime) {
-        try { fs.unlinkSync(qrisFile); } catch {}
-        delete transaksi[id];
-        usedAmounts.delete(trx.uniqueAmount);
-        updateUserActiveTransactions(trx.username, id);
-        globalActiveTransactions.delete(id);
-        return res.json({ status: 'expired', expiresIn: 0 });
+        trx.status = 'expired';
+        cleanupTransaction(id, trx, qrisFile);
+        return res.json({ 
+            status: 'expired', 
+            expiresIn: 0 
+        });
     }
 
     try {
@@ -251,24 +258,22 @@ app.get('/api/check-payment/:id', async (req, res) => {
         if (matchedTx) {
             processedTransactions.add(matchedTx.issuer_reff);
             trx.paid = true;
+            trx.status = 'paid';
+            trx.paymentDetails = {
+                paymentId: matchedTx.issuer_reff,
+                paymentTime: matchedTx.date,
+                paymentMethod: matchedTx.brand_name,
+                amount: trx.originalAmount,
+                uniqueAmount: trx.uniqueAmount,
+                uniqueSuffix: trx.uniqueSuffix
+            };
 
-            try { fs.unlinkSync(qrisFile); } catch {}
-            delete transaksi[id];
-            usedAmounts.delete(trx.uniqueAmount);
-            updateUserActiveTransactions(trx.username, id);
-            globalActiveTransactions.delete(id);
-
+            cleanupTransaction(id, trx, qrisFile);
+            
             return res.json({ 
                 status: 'paid',
                 expiresIn: 0,
-                paymentDetails: {
-                    paymentId: matchedTx.issuer_reff,
-                    paymentTime: matchedTx.date,
-                    paymentMethod: matchedTx.brand_name,
-                    amount: trx.originalAmount,
-                    uniqueAmount: trx.uniqueAmount,
-                    uniqueSuffix: trx.uniqueSuffix
-                }
+                paymentDetails: trx.paymentDetails
             });
         }
 
@@ -280,9 +285,29 @@ app.get('/api/check-payment/:id', async (req, res) => {
 
     } catch (err) {
         console.error('Error checking payment:', err);
-        res.status(500).json({ error: 'Failed to check payment status' });
+        return res.status(500).json({ 
+            error: 'Failed to check payment status',
+            status: trx.status
+        });
     }
 });
+
+function cleanupTransaction(id, trx, qrisFile) {
+    try { 
+        if (fs.existsSync(qrisFile)) {
+            fs.unlinkSync(qrisFile); 
+        }
+    } catch (err) {
+        console.error('Error deleting QRIS file:', err);
+    }
+    
+    if (trx.paid || Date.now() > trx.expireTime) {
+        delete transaksi[id];
+        usedAmounts.delete(trx.uniqueAmount);
+        updateUserActiveTransactions(trx.username, id);
+        globalActiveTransactions.delete(id);
+    }
+}
 
 function updateUserActiveTransactions(username, transactionId) {
     const activeTransactions = userActiveTransactions.get(username) || [];
@@ -301,14 +326,13 @@ function cleanupExpiredData() {
 
     Object.keys(transaksi).forEach(id => {
         const trx = transaksi[id];
-        if (now > trx.expireTime) {
+        if (!trx) return;
+
+        if (now > trx.expireTime || trx.paid) {
             const qrisFile = path.join('/tmp', `${trx.qris}.jpg`);
-            try { fs.unlinkSync(qrisFile); } catch {}
-            delete transaksi[id];
-            usedAmounts.delete(trx.uniqueAmount);
-            updateUserActiveTransactions(trx.username, id);
-            globalActiveTransactions.delete(id);
-            console.log(`Cleaned expired transaction: ${id}`);
+            trx.status = trx.paid ? 'paid' : 'expired';
+            cleanupTransaction(id, trx, qrisFile);
+            console.log(`Cleaned transaction: ${id}, status: ${trx.status}`);
         }
     });
 
@@ -346,12 +370,22 @@ function cleanupExpiredData() {
         }
     }
 
-    // Clean up old user request times
     for (const [username, lastTime] of userLastRequestTime) {
         if (now - lastTime > EXPIRY_DURATION) {
             userLastRequestTime.delete(username);
         }
     }
+
+    const filteredQueue = requestQueue.filter(({ request }) => {
+        const userActive = userActiveTransactions.get(request.username) || [];
+        return userActive.some(id => {
+            const trx = transaksi[id];
+            return trx && !trx.paid && now <= trx.expireTime;
+        });
+    });
+    
+    requestQueue.length = 0;
+    requestQueue.push(...filteredQueue);
 }
 
 setInterval(cleanupExpiredData, 2 * 60 * 1000);
