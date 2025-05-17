@@ -29,17 +29,38 @@ app.get('/qris/:filename', (req, res) => {
 const transaksi = {};
 const usedAmounts = new Map();
 const transactionIdCounters = new Map();
+const userActiveTransactions = new Map();
 const merchantId = 'OK2010179';
-const apikey = '642611917473311022010179OKCT01251A5A297AF4EEB7FC7CC7BFA2683C';
+const apikey = '589503917347533522010179OKCT111616275EB7F8C048F9DD2483ACC75A';
 const processedTransactions = new Set();
 let lastApiResponse = null;
 let lastApiFetchTime = 0;
-const EXPIRY_DURATION = 10 * 60 * 1000; // 10 menit dalam milidetik
+const EXPIRY_DURATION = 10 * 60 * 1000;
+const MAX_ACTIVE_TRANSACTIONS = 2; // Diubah menjadi 2 transaksi aktif per user
 
 app.post('/api/topup', async (req, res) => {
     const { amount, username } = req.body;
     if (!amount || isNaN(amount) || amount <= 0 || !Number.isInteger(Number(amount))) {
         return res.status(400).json({ error: 'Invalid amount: must be a positive integer' });
+    }
+    if (!username) {
+        return res.status(400).json({ error: 'Username is required' });
+    }
+
+    const activeTransactions = userActiveTransactions.get(username) || [];
+    const now = Date.now();
+    const validActiveTransactions = activeTransactions.filter(id => {
+        const trx = transaksi[id];
+        return trx && !trx.paid && now <= trx.expireTime;
+    });
+    
+    if (validActiveTransactions.length >= MAX_ACTIVE_TRANSACTIONS) {
+        const earliestExpiry = Math.min(...validActiveTransactions.map(id => transaksi[id].expireTime));
+        const waitTime = Math.ceil((earliestExpiry - now) / 1000);
+        return res.status(429).json({ 
+            error: 'Too many active transactions. Please wait until existing transactions are paid or expired.',
+            waitTime
+        });
     }
 
     const originalAmount = parseInt(amount);
@@ -48,7 +69,6 @@ app.post('/api/topup', async (req, res) => {
     const maxAttempts = 999;
     let attempts = 0;
 
-    const now = Date.now();
     const dayStart = now - (now % (24 * 60 * 60 * 1000));
     while (attempts < maxAttempts) {
         uniqueSuffix = Math.floor(1 + Math.random() * 999);
@@ -90,7 +110,9 @@ app.post('/api/topup', async (req, res) => {
             username
         };
 
-        const remainingSeconds = Math.floor((expireTime - Date.now()) / 1000);
+        userActiveTransactions.set(username, [...validActiveTransactions, id]);
+
+        const remainingSeconds = Math.floor((expireTime - now) / 1000);
         res.json({
             id,
             qris: `${req.protocol}://${req.get('host')}/qris/${filename}.jpg`,
@@ -122,13 +144,15 @@ app.get('/api/check-payment/:id', async (req, res) => {
         try { fs.unlinkSync(qrisFile); } catch {}
         delete transaksi[id];
         usedAmounts.delete(trx.uniqueAmount);
-        return res.json({ status: 'paid' });
+        updateUserActiveTransactions(trx.username, id);
+        return res.json({ status: 'paid', expiresIn: 0 });
     }
 
     if (now > trx.expireTime) {
         try { fs.unlinkSync(qrisFile); } catch {}
         delete transaksi[id];
         usedAmounts.delete(trx.uniqueAmount);
+        updateUserActiveTransactions(trx.username, id);
         return res.json({ status: 'expired', expiresIn: 0 });
     }
 
@@ -162,6 +186,7 @@ app.get('/api/check-payment/:id', async (req, res) => {
             try { fs.unlinkSync(qrisFile); } catch {}
             delete transaksi[id];
             usedAmounts.delete(trx.uniqueAmount);
+            updateUserActiveTransactions(trx.username, id);
 
             return res.json({ 
                 status: 'paid',
@@ -189,6 +214,16 @@ app.get('/api/check-payment/:id', async (req, res) => {
     }
 });
 
+function updateUserActiveTransactions(username, transactionId) {
+    const activeTransactions = userActiveTransactions.get(username) || [];
+    const updatedTransactions = activeTransactions.filter(id => id !== transactionId);
+    if (updatedTransactions.length > 0) {
+        userActiveTransactions.set(username, updatedTransactions);
+    } else {
+        userActiveTransactions.delete(username);
+    }
+}
+
 function cleanupExpiredData() {
     const now = Date.now();
     const dayStart = now - (now % (24 * 60 * 60 * 1000));
@@ -200,6 +235,7 @@ function cleanupExpiredData() {
             try { fs.unlinkSync(qrisFile); } catch {}
             delete transaksi[id];
             usedAmounts.delete(trx.uniqueAmount);
+            updateUserActiveTransactions(trx.username, id);
             console.log(`Cleaned expired transaction: ${id}`);
         }
     });
@@ -218,9 +254,21 @@ function cleanupExpiredData() {
             console.log(`Cleaned expired counter: ${dayKey}`);
         }
     }
+
+    for (const [username, transactions] of userActiveTransactions) {
+        const validTransactions = transactions.filter(id => {
+            const trx = transaksi[id];
+            return trx && !trx.paid && now <= trx.expireTime;
+        });
+        if (validTransactions.length > 0) {
+            userActiveTransactions.set(username, validTransactions);
+        } else {
+            userActiveTransactions.delete(username);
+        }
+    }
 }
 
-setInterval(cleanupExpiredData, 2 * 60 * 1000); // Dipercepat menjadi setiap 2 menit
+setInterval(cleanupExpiredData, 2 * 60 * 1000);
 
 function cleanupProcessedTransactions() {
     if (processedTransactions.size > 1000) {
