@@ -27,13 +27,14 @@ app.get('/qris/:filename', (req, res) => {
 });
 
 const transaksi = {};
-const usedAmounts = new Map(); // Menyimpan uniqueAmount dan waktu pembuatannya
-const transactionIdCounters = new Map(); // Menyimpan counter ID per hari
+const usedAmounts = new Map();
+const transactionIdCounters = new Map();
 const merchantId = 'OK2010179';
-const apikey = '642611917473311022010179OKCT01251A5A297AF4EEB7FC7CC7BFA2683C';
+const apikey = '589503917347533522010179OKCT111616275EB7F8C048F9DD2483ACC75A';
 const processedTransactions = new Set();
-let lastApiResponse = null; // Cache untuk respons API terakhir
-let lastApiFetchTime = 0; // Waktu terakhir pengambilan API
+let lastApiResponse = null;
+let lastApiFetchTime = 0;
+const EXPIRY_DURATION = 10 * 60 * 1000; // 10 menit dalam milidetik
 
 app.post('/api/topup', async (req, res) => {
     const { amount, username } = req.body;
@@ -47,14 +48,14 @@ app.post('/api/topup', async (req, res) => {
     const maxAttempts = 999;
     let attempts = 0;
 
-    // Cari suffix yang belum digunakan
     const now = Date.now();
     const dayStart = now - (now % (24 * 60 * 60 * 1000));
     while (attempts < maxAttempts) {
         uniqueSuffix = Math.floor(1 + Math.random() * 999);
         uniqueAmount = originalAmount + uniqueSuffix;
-        if (!usedAmounts.has(uniqueAmount) || usedAmounts.get(uniqueAmount).dayStart !== dayStart) {
-            usedAmounts.set(uniqueAmount, { dayStart, createdAt: now });
+        const existing = usedAmounts.get(uniqueAmount);
+        if (!existing || existing.dayStart !== dayStart || now > existing.expireTime) {
+            usedAmounts.set(uniqueAmount, { dayStart, createdAt: now, expireTime: now + EXPIRY_DURATION });
             break;
         }
         attempts++;
@@ -64,15 +65,14 @@ app.post('/api/topup', async (req, res) => {
         return res.status(429).json({ error: 'No unique amount available. Try again later.' });
     }
 
-    // Generate Transaction ID
     const dayKey = `TRX${dayStart}`;
     let counter = transactionIdCounters.get(dayKey) || 0;
     counter += 1;
     transactionIdCounters.set(dayKey, counter);
-    const id = `${dayKey}${counter.toString().padStart(3, '0')}`; // Contoh: XST<timestamp>000001
+    const id = `${dayKey}${counter.toString().padStart(6, '0')}`;
 
-    const startTime = Date.now();
-    const expireTime = startTime + 10 * 60 * 1000;
+    const startTime = now;
+    const expireTime = startTime + EXPIRY_DURATION;
 
     try {
         const filename = `OK${Date.now()}`;
@@ -90,19 +90,22 @@ app.post('/api/topup', async (req, res) => {
             username
         };
 
+        const remainingSeconds = Math.floor((expireTime - Date.now()) / 1000);
         res.json({
             id,
             qris: `${req.protocol}://${req.get('host')}/qris/${filename}.jpg`,
             expireAt: expireTime,
+            expiresIn: remainingSeconds,
             amount: originalAmount,            
             kodeunik: uniqueSuffix,
             total: uniqueAmount,
-            note: `Mohon transfer tepat ${uniqueAmount} untuk verifikasi otomatis`
+            note: `Mohon transfer tepat ${uniqueAmount} untuk verifikasi otomatis`,
+            expiryStatus: remainingSeconds <= 600 ? 'expires_soon' : 'active'
         });
     } catch (err) {
         console.error('Error generating QRIS:', err);
         usedAmounts.delete(uniqueAmount);
-        transactionIdCounters.set(dayKey, counter - 1); // Rollback counter
+        transactionIdCounters.set(dayKey, counter - 1);
         res.status(500).json({ error: 'Failed to generate QRIS' });
     }
 });
@@ -113,6 +116,7 @@ app.get('/api/check-payment/:id', async (req, res) => {
     if (!trx) return res.status(404).json({ error: 'Transaction not found' });
 
     const qrisFile = path.join('/tmp', `${trx.qris}.jpg`);
+    const now = Date.now();
 
     if (trx.paid) {
         try { fs.unlinkSync(qrisFile); } catch {}
@@ -121,24 +125,22 @@ app.get('/api/check-payment/:id', async (req, res) => {
         return res.json({ status: 'paid' });
     }
 
-    if (Date.now() > trx.expireTime) {
+    if (now > trx.expireTime) {
         try { fs.unlinkSync(qrisFile); } catch {}
         delete transaksi[id];
         usedAmounts.delete(trx.uniqueAmount);
-        return res.json({ status: 'expired' });
+        return res.json({ status: 'expired', expiresIn: 0 });
     }
 
     try {
-        const now = Date.now();
-        const cacheDuration = 30 * 1000; // Cache selama 30 detik
+        const cacheDuration = 30 * 1000;
         let txList;
 
-        // Gunakan cache jika masih valid
         if (lastApiResponse && now - lastApiFetchTime < cacheDuration) {
             txList = lastApiResponse;
         } else {
             const response = await axios.get(`https://gateway.okeconnect.com/api/mutasi/qris/${merchantId}/${apikey}`);
-            txList = response.data.data.slice(0, 10); // Kurangi jumlah transaksi yang diambil
+            txList = response.data.data.slice(0, 10);
             lastApiResponse = txList;
             lastApiFetchTime = now;
         }
@@ -151,6 +153,8 @@ app.get('/api/check-payment/:id', async (req, res) => {
                    !processedTransactions.has(txId);
         });
 
+        const remainingSeconds = Math.floor((trx.expireTime - now) / 1000);
+
         if (matchedTx) {
             processedTransactions.add(matchedTx.issuer_reff);
             trx.paid = true;
@@ -161,6 +165,7 @@ app.get('/api/check-payment/:id', async (req, res) => {
 
             return res.json({ 
                 status: 'paid',
+                expiresIn: 0,
                 paymentDetails: {
                     paymentId: matchedTx.issuer_reff,
                     paymentTime: matchedTx.date,
@@ -172,7 +177,11 @@ app.get('/api/check-payment/:id', async (req, res) => {
             });
         }
 
-        return res.json({ status: 'pending' });
+        return res.json({ 
+            status: 'pending',
+            expiresIn: remainingSeconds,
+            expiryStatus: remainingSeconds <= 600 ? 'expires_soon' : 'active'
+        });
 
     } catch (err) {
         console.error('Error checking payment:', err);
@@ -184,7 +193,6 @@ function cleanupExpiredData() {
     const now = Date.now();
     const dayStart = now - (now % (24 * 60 * 60 * 1000));
 
-    // Bersihkan transaksi kadaluarsa
     Object.keys(transaksi).forEach(id => {
         const trx = transaksi[id];
         if (now > trx.expireTime) {
@@ -196,17 +204,15 @@ function cleanupExpiredData() {
         }
     });
 
-    // Bersihkan usedAmounts yang lebih lama dari 24 jam
-    for (const [amount, { createdAt }] of usedAmounts) {
-        if (now - createdAt > 24 * 60 * 60 * 1000) {
+    for (const [amount, { expireTime }] of usedAmounts) {
+        if (now > expireTime) {
             usedAmounts.delete(amount);
             console.log(`Cleaned expired amount: ${amount}`);
         }
     }
 
-    // Bersihkan transactionIdCounters yang lebih lama dari 24 jam
     for (const [dayKey] of transactionIdCounters) {
-        const dayTimestamp = parseInt(dayKey.replace('XST', ''));
+        const dayTimestamp = parseInt(dayKey.replace('TRX', ''));
         if (now - dayTimestamp > 24 * 60 * 60 * 1000) {
             transactionIdCounters.delete(dayKey);
             console.log(`Cleaned expired counter: ${dayKey}`);
@@ -214,7 +220,7 @@ function cleanupExpiredData() {
     }
 }
 
-setInterval(cleanupExpiredData, 7 * 60 * 1000);
+setInterval(cleanupExpiredData, 2 * 60 * 1000); // Dipercepat menjadi setiap 2 menit
 
 function cleanupProcessedTransactions() {
     if (processedTransactions.size > 1000) {
