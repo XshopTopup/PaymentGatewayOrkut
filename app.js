@@ -6,12 +6,12 @@ const fs = require('fs').promises;
 const { qrisDinamis } = require('./dinamis');
 
 const app = express();
-const port = process.env.PORT || 3002;
+const port = 3002;
 
 // Configuration
 const config = {
-  merchantId: process.env.MERCHANT_ID || 'OK2010179',
-  apiKey: process.env.API_KEY || '642611917473311022010179OKCT01251A5A297AF4EEB7FC7CC7BFA2683C',
+  merchantId: 'OK2010179',
+  apiKey: '642611917473311022010179OKCT01251A5A297AF4EEB7FC7CC7BFA2683C',
   expiryDuration: 10 * 60 * 1000, // 10 minutes
   maxActiveTransactionsPerUser: 1,
   maxGlobalActiveUsers: 5,
