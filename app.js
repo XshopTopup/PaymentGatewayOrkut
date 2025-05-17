@@ -39,9 +39,31 @@ let lastApiFetchTime = 0;
 const EXPIRY_DURATION = 10 * 60 * 1000;
 const MAX_ACTIVE_TRANSACTIONS = 1;
 const MAX_GLOBAL_ACTIVE_TRANSACTIONS = 5;
+const REQUEST_DELAY = 500;
 
-app.post('/api/topup', async (req, res) => {
-    const { amount, username } = req.body;
+const requestQueue = [];
+let isProcessingQueue = false;
+
+async function processQueue() {
+    if (isProcessingQueue || requestQueue.length === 0) return;
+    
+    isProcessingQueue = true;
+    const { resolve, reject, request } = requestQueue.shift();
+    
+    try {
+        const result = await handleTopupRequest(request);
+        resolve(result);
+    } catch (err) {
+        reject(err);
+    }
+    
+    setTimeout(() => {
+        isProcessingQueue = false;
+        processQueue();
+    }, REQUEST_DELAY);
+}
+
+async function handleTopupRequest({ req, res, amount, username }) {
     if (!amount || isNaN(amount) || amount <= 0 || !Number.isInteger(Number(amount))) {
         return res.status(400).json({ error: 'Invalid amount: must be a positive integer' });
     }
@@ -110,7 +132,7 @@ app.post('/api/topup', async (req, res) => {
     const expireTime = startTime + EXPIRY_DURATION;
 
     try {
-        const filename = `OK${Date.now()}`;
+        const filename = `XST${Date.now()}`;
         const filepath = `/tmp/${filename}.jpg`;
         await qrisDinamis(uniqueAmount, filepath);
         
@@ -129,7 +151,7 @@ app.post('/api/topup', async (req, res) => {
         globalActiveTransactions.add(id);
 
         const remainingSeconds = Math.floor((expireTime - now) / 1000);
-        res.json({
+        return res.json({
             id,
             qris: `${req.protocol}://${req.get('host')}/qris/${filename}.jpg`,
             expireAt: expireTime,
@@ -144,8 +166,17 @@ app.post('/api/topup', async (req, res) => {
         console.error('Error generating QRIS:', err);
         usedAmounts.delete(uniqueAmount);
         transactionIdCounters.set(dayKey, counter - 1);
-        res.status(500).json({ error: 'Failed to generate QRIS' });
+        return res.status(500).json({ error: 'Failed to generate QRIS' });
     }
+}
+
+app.post('/api/topup', (req, res) => {
+    const { amount, username } = req.body;
+    
+    return new Promise((resolve, reject) => {
+        requestQueue.push({ resolve, reject, request: { req, res, amount, username } });
+        processQueue();
+    });
 });
 
 app.get('/api/check-payment/:id', async (req, res) => {
