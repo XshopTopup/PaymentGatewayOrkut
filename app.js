@@ -39,28 +39,48 @@ let lastApiFetchTime = 0;
 const EXPIRY_DURATION = 10 * 60 * 1000;
 const MAX_ACTIVE_TRANSACTIONS = 1;
 const MAX_GLOBAL_ACTIVE_TRANSACTIONS = 5;
-const REQUEST_DELAY = 5000;
+const USER_REQUEST_DELAY = 10000; // 10 seconds delay between different users' requests
 
+// Track last request time for each user
+const userLastRequestTime = new Map();
+// Global request queue
 const requestQueue = [];
 let isProcessingQueue = false;
 
 async function processQueue() {
     if (isProcessingQueue || requestQueue.length === 0) return;
-    
+
     isProcessingQueue = true;
     const { resolve, reject, request } = requestQueue.shift();
-    
+    const { username } = request;
+
     try {
+        // Check if we need to delay this user's request
+        const now = Date.now();
+        const lastRequestTime = userLastRequestTime.get(username) || 0;
+        const timeSinceLastRequest = now - lastRequestTime;
+        const delayNeeded = Math.max(0, USER_REQUEST_DELAY - timeSinceLastRequest);
+
+        if (delayNeeded > 0) {
+            // Re-queue the request and wait
+            setTimeout(() => {
+                requestQueue.unshift({ resolve, reject, request });
+                isProcessingQueue = false;
+                processQueue();
+            }, delayNeeded);
+            return;
+        }
+
+        // Process the request and update last request time
         const result = await handleTopupRequest(request);
+        userLastRequestTime.set(username, now);
         resolve(result);
     } catch (err) {
         reject(err);
     }
-    
-    setTimeout(() => {
-        isProcessingQueue = false;
-        processQueue();
-    }, REQUEST_DELAY);
+
+    isProcessingQueue = false;
+    processQueue();
 }
 
 async function handleTopupRequest({ req, res, amount, username }) {
@@ -323,6 +343,13 @@ function cleanupExpiredData() {
         const trx = transaksi[id];
         if (!trx || trx.paid || now > trx.expireTime) {
             globalActiveTransactions.delete(id);
+        }
+    }
+
+    // Clean up old user request times
+    for (const [username, lastTime] of userLastRequestTime) {
+        if (now - lastTime > EXPIRY_DURATION) {
+            userLastRequestTime.delete(username);
         }
     }
 }
