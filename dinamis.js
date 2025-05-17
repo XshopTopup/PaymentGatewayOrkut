@@ -1,12 +1,10 @@
 const { codeqr } = require('./config.json');
 const QRCode = require('qrcode');
-const { createCanvas, loadImage } = require('canvas');
-const fs = require('fs').promises;
 
 function toCRC16(str) {
   function charCodeAt(str, i) {
-    let get = str.substr(i, 1);
-    return get.charCodeAt();
+    let get = str.substr(i, 1)
+    return get.charCodeAt()
   }
 
   let crc = 0xFFFF;
@@ -44,45 +42,9 @@ async function qrisDinamis(nominal, path) {
   console.log("🔧 QR Dibuat untuk:", nominal);
   console.log("🧾 Final QR String:", output);
 
-  // Generate QR code to a temporary buffer
-  const qrBuffer = await QRCode.toBuffer(output, { margin: 2, scale: 10 });
-
-  // Load the QR code image into a canvas
-  const image = await loadImage(qrBuffer);
-  const canvas = createCanvas(image.width, image.height);
-  const ctx = canvas.getContext('2d');
-
-  // Draw the QR code on the canvas
-  ctx.drawImage(image, 0, 0);
-
-  // Calculate dimensions for the watermark (oval background)
-  const watermarkWidth = canvas.width * 0.3; // 30% of QR code width
-  const watermarkHeight = canvas.height * 0.15; // 15% of QR code height
-  const centerX = canvas.width / 2;
-  const centerY = canvas.height / 2;
-
-  // Draw the purple oval background
-  ctx.fillStyle = '#7B2CBF'; // Purple color matching the AXIS logo
-  ctx.beginPath();
-  ctx.ellipse(centerX, centerY, watermarkWidth / 2, watermarkHeight / 2, 0, 0, 2 * Math.PI);
-  ctx.fill();
-
-  // Draw the main text "XSTBOT"
-  ctx.font = 'bold 28px Arial'; // Adjust font size to fit
-  ctx.fillStyle = 'white';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText('XSTBOT', centerX, centerY);
-
-  // Draw the smaller text "JXSTBOT" below
-  ctx.font = 'bold 14px Arial'; // Smaller font for the subtext
-  ctx.fillText('JXSTBOT', centerX, centerY + watermarkHeight / 2 + 10);
-
-  // Save the final image
-  const buffer = canvas.toBuffer('image/png');
-  await fs.writeFile(path, buffer);
-
+  await QRCode.toFile(path, output, { margin: 2, scale: 10 });
   return path;
 }
 
-module.exports = { qrisDinamis };
+
+module.exports = { qrisDinamis }
