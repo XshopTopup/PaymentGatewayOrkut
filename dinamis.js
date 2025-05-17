@@ -1,10 +1,12 @@
 const { codeqr } = require('./config.json');
 const QRCode = require('qrcode');
+const { createCanvas, loadImage } = require('canvas');
+const fs = require('fs').promises;
 
 function toCRC16(str) {
   function charCodeAt(str, i) {
-    let get = str.substr(i, 1)
-    return get.charCodeAt()
+    let get = str.substr(i, 1);
+    return get.charCodeAt();
   }
 
   let crc = 0xFFFF;
@@ -42,9 +44,29 @@ async function qrisDinamis(nominal, path) {
   console.log("🔧 QR Dibuat untuk:", nominal);
   console.log("🧾 Final QR String:", output);
 
-  await QRCode.toFile(path, output, { margin: 2, scale: 10 });
+  // Generate QR code to a temporary buffer
+  const qrBuffer = await QRCode.toBuffer(output, { margin: 2, scale: 10 });
+
+  // Load the QR code image into a canvas
+  const image = await loadImage(qrBuffer);
+  const canvas = createCanvas(image.width, image.height);
+  const ctx = canvas.getContext('2d');
+
+  // Draw the QR code on the canvas
+  ctx.drawImage(image, 0, 0);
+
+  // Add watermark
+  ctx.font = 'bold 20px Arial'; // Adjust font size to be small enough
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.8)'; // White with slight transparency
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('XSTBOT', canvas.width / 2, canvas.height / 2);
+
+  // Save the final image
+  const buffer = canvas.toBuffer('image/png');
+  await fs.writeFile(path, buffer);
+
   return path;
 }
 
-
-module.exports = { qrisDinamis }
+module.exports = { qrisDinamis };
